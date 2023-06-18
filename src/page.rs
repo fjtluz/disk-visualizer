@@ -1,8 +1,8 @@
 use std::fmt::{Display, Formatter};
 
 pub struct Line {
-    position: String,
-    hex_bytes: String,
+    pub position: String,
+    pub hex_bytes: String,
     pub ascii_bytes: String,
 }
 

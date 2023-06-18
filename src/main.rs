@@ -34,14 +34,23 @@ fn write_to_page(file: &mut File, page: &mut Vec<Line>, start: usize, end: usize
     for byte_result in bytes.skip(10 * start) {
         match byte_result {
             Ok(byte) => {
-                let mut byte_as_hex = format!("{byte:X} ");
-                if byte_as_hex.len() == 2 {
+                let mut byte_as_hex = format!("{byte:X}");
+                if byte_as_hex.len() == 1 {
                     byte_as_hex.insert(0, '0');
                 }
                 hex_in_line.push_str(byte_as_hex.as_str());
+                hex_in_line.push(' ');
 
                 let byte_as_ascii = char::from(byte);
-                ascii_in_line.push(byte_as_ascii);
+
+                match byte_as_hex.as_str() {
+                    "85" => ascii_in_line.push_str("NL"),   // NEXT LINE (NL)
+                    "0A" => ascii_in_line.push_str("LF"),   // LINE FEED (LF)
+                    "0B" => ascii_in_line.push_str("LT"),   // LINE TABULATION (LT)
+                    "0C" => ascii_in_line.push_str("FF"),   // FORM FEED (FF)
+                    "0D" => ascii_in_line.push_str("CR"),   // CARRIAGE RETURN (CR)
+                    _ => ascii_in_line.push(byte_as_ascii)
+                }
             },
             Err(e) => println!("{}", e)
         };
@@ -92,6 +101,12 @@ impl DiskVisualizer {
         self.current_page = current_page;
         self.start = start;
         self.end = end;
+    }
+
+    pub fn print_page(&self) {
+        for line in &self.current_page {
+            println!("{} {}", line.position, line.hex_bytes);
+        }
     }
 }
 
@@ -157,6 +172,8 @@ impl Application for DiskVisualizer {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
+        self.print_page();
+
         let mut content: Column<'_, Message> = Column::new().width(Length::Fill);
 
         for i in &self.current_page {
