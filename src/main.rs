@@ -1,26 +1,27 @@
+extern crate core;
+
 mod page;
 
 use page::Line;
+
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
-use std::process::Command;
+use std::env;
 
-use iced::{event, keyboard, window};
+use iced::{keyboard, window};
 use iced::{subscription, Subscription, Event};
-use iced::{alignment, Application, Error};
+use iced::{Application, Error};
 use iced::theme;
 
-use iced::widget::scrollable::RelativeOffset;
-use iced::widget::{
-    checkbox, column, container, horizontal_space, image, radio, row,
-    scrollable, slider, text, text_input, toggler, vertical_space,
-};
-use iced::widget::{Button, Column, Container, Slider};
-use iced::{Color, Element, Font, Length, Renderer, Sandbox, Settings};
+use iced::widget::{container,  text};
+use iced::widget::Column;
+use iced::{Element, Length, Settings};
+use iced::event::Status;
+use iced::keyboard::KeyCode;
 
-fn write_to_page(file: &mut File, page: &mut Vec<Line>, offset: usize) {
-    let mut total_of_bytes_read = 0;
+fn write_to_page(file: &mut File, page: &mut Vec<Line>, start: usize, end: usize) {
+    let mut total_of_bytes_read = start.clone();
     let mut index = 0;
 
     let mut hex_in_line = String::new();
@@ -30,7 +31,7 @@ fn write_to_page(file: &mut File, page: &mut Vec<Line>, offset: usize) {
 
     let bytes = reader.bytes();
 
-    for byte_result in bytes.skip(1000 * offset) {
+    for byte_result in bytes.skip(10 * start) {
         match byte_result {
             Ok(byte) => {
                 let mut byte_as_hex = format!("{byte:X} ");
@@ -39,7 +40,7 @@ fn write_to_page(file: &mut File, page: &mut Vec<Line>, offset: usize) {
                 }
                 hex_in_line.push_str(byte_as_hex.as_str());
 
-                let mut byte_as_ascii = char::from(byte);
+                let byte_as_ascii = char::from(byte);
                 ascii_in_line.push(byte_as_ascii);
             },
             Err(e) => println!("{}", e)
@@ -47,15 +48,16 @@ fn write_to_page(file: &mut File, page: &mut Vec<Line>, offset: usize) {
 
         index += 1;
         if index % 10 == 0 {
-            let line = format!("{:08}", index + (1000 * offset));
+            let line = format!("{:08}", index + (10 * start));
             page.push(Line::create(line, hex_in_line, ascii_in_line));
 
             hex_in_line = String::new();
             ascii_in_line = String::new();
+
+            total_of_bytes_read += 1;
         }
 
-        total_of_bytes_read += 1;
-        if total_of_bytes_read == 1000 {
+        if total_of_bytes_read == end {
             break;
         }
     }
@@ -76,10 +78,21 @@ fn main() -> Result<(), Error> {
 
 pub struct DiskVisualizer {
     file: File,
-    indexes: [u8; 3],
-    pages: [Vec<Line>; 3],
     current_page: Vec<Line>,
-    debug: bool,
+    start: usize,
+    end: usize
+}
+
+impl DiskVisualizer {
+    pub fn load_page(&mut self, start: usize, end: usize) {
+        let mut current_page = vec![];
+
+        write_to_page(&mut self.file, &mut current_page, start, end);
+
+        self.current_page = current_page;
+        self.start = start;
+        self.end = end;
+    }
 }
 
 impl Application for DiskVisualizer {
@@ -89,27 +102,27 @@ impl Application for DiskVisualizer {
     type Flags = ();
 
     fn new(_flags: ()) -> (Self, iced::Command<Message>) {
-        let disk_path = Path::new("/dev/sda");
+        let mut disk_path = Path::new("");
+        if env::consts::OS == "linux" {
+            disk_path = Path::new("/dev/sda");
+        } else if env::consts::OS == "windows" {
+            disk_path = Path::new("\\\\.\\C:");
+        } else {
+            panic!("OS não suportado pela aplicação!")
+        }
+
         let mut file = File::open(disk_path).expect("Não foi possível ler o arquivo informado!");
 
-        let mut pages: [Vec<Line>; 3] = [vec![], vec![], vec![]];
+        let mut page: Vec<Line> = vec![];
 
-        for i in 0..=2 {
-            write_to_page(&mut file, &mut pages[i], i);
-        }
-
-        let mut current_page = vec![];
-        for line in &pages[0] {
-            current_page.push(line.clone())
-        }
+        write_to_page(&mut file, &mut page, 0, 30);
 
         (
             DiskVisualizer {
-            file,
-            indexes: [0, 1, 2],
-            pages,
-            current_page,
-            debug: false
+                file,
+                current_page: page,
+                start: 0,
+                end: 30
             },
             iced::Command::none()
         )
@@ -121,11 +134,23 @@ impl Application for DiskVisualizer {
 
     fn update(&mut self, message: Self::Message) -> iced::Command<Message> {
         match message {
-            Message::Scrolled(offset) => {
-                println!("{:#?}", offset);
-            },
             Message::PageDown => {
-                println!("PAGE DOWN");
+                self.load_page(self.start + 30, self.end + 30);
+            },
+            Message::PageUp => {
+                if self.start >= 30 {
+                    self.load_page(self.start - 30, self.end - 30);
+                } else if self.start != 0 {
+                    self.load_page(0, 30);
+                }
+            },
+            Message::Down => {
+                self.load_page(self.start + 1, self.end + 1);
+            },
+            Message::Up => {
+                if self.start >= 1 {
+                    self.load_page(self.start - 1, self.end - 1);
+                }
             }
         }
         return iced::Command::none()
@@ -140,22 +165,43 @@ impl Application for DiskVisualizer {
             );
         }
 
-        let scrollable = scrollable(content)
-            .on_scroll(Message::Scrolled);
-
-        container(scrollable).center_x().into()
+        container(content).center_x().into()
     }
 
     fn subscription(&self) -> Subscription<Self::Message> {
         subscription::events_with(|event, status| match (event, status) {
             (
                 Event::Keyboard(keyboard::Event::KeyPressed {
-                    key_code: keyboard::KeyCode::PageDown,
+                    key_code: KeyCode::PageDown,
                     modifiers: _,
                     ..
                 }),
-                event::Status::Ignored
+                Status::Ignored
             ) => Some(Message::PageDown),
+            (
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                    key_code: KeyCode::PageUp,
+                    modifiers: _,
+                    ..
+                }),
+                Status::Ignored
+            ) => Some(Message::PageUp),
+            (
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                                    key_code: KeyCode::Down,
+                                    modifiers: _,
+                                    ..
+                                }),
+                Status::Ignored
+            ) => Some(Message::Down),
+            (
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                                    key_code: KeyCode::Up,
+                                    modifiers: _,
+                                    ..
+                                }),
+                Status::Ignored
+            ) => Some(Message::Up),
             _ => None
         })
     }
@@ -163,7 +209,11 @@ impl Application for DiskVisualizer {
 
 #[derive(Debug, Clone)]
 pub enum Message {
-    Scrolled(RelativeOffset),
     PageDown,
+    PageUp,
+    Down,
+    Up
 }
+
+
 

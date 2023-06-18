@@ -27,7 +27,7 @@ impl Clone for Line {
         return Line {
             position: String::from(&self.position),
             hex_bytes: String::from(&self.hex_bytes),
-            ascii_bytes: String::from(&self.hex_bytes)
+            ascii_bytes: String::from(&self.ascii_bytes)
         }
     }
 }
