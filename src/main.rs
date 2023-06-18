@@ -102,12 +102,6 @@ impl DiskVisualizer {
         self.start = start;
         self.end = end;
     }
-
-    pub fn print_page(&self) {
-        for line in &self.current_page {
-            println!("{} {}", line.position, line.hex_bytes);
-        }
-    }
 }
 
 impl Application for DiskVisualizer {
@@ -172,8 +166,6 @@ impl Application for DiskVisualizer {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        self.print_page();
-
         let mut content: Column<'_, Message> = Column::new().width(Length::Fill);
 
         for i in &self.current_page {
