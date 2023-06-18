@@ -3,18 +3,10 @@ use std::fmt::{Display, Formatter};
 pub struct Line {
     position: String,
     hex_bytes: String,
-    ascii_bytes: String,
+    pub ascii_bytes: String,
 }
 
 impl Line {
-    pub fn new() -> Line {
-        Line {
-            position: String::new(),
-            hex_bytes: String::new(),
-            ascii_bytes: String::new()
-        }
-    }
-
     pub fn create(position: String, hex_bytes: String, ascii_bytes: String) -> Line {
         Line {
             position,
@@ -26,7 +18,7 @@ impl Line {
 
 impl Display for Line {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        return write!(f, "{}\t{}\t{}", self.position, self.hex_bytes, self.ascii_bytes);
+        return write!(f, "{}      {}      {}", self.position, self.hex_bytes, self.ascii_bytes);
     }
 }
 
