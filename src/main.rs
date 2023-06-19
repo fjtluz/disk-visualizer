@@ -7,7 +7,7 @@ use page::Line;
 use std::fs::File;
 use std::io::{BufReader, Read};
 use std::path::Path;
-use std::env;
+use std::{env, process};
 
 use iced::{keyboard, window};
 use iced::{subscription, Subscription, Event};
@@ -52,12 +52,20 @@ fn write_to_page(file: &mut File, page: &mut Vec<Line>, start: usize, end: usize
                     "0D" => ascii_in_line.push_str("CR"),   // CARRIAGE RETURN (CR)
                     _ => ascii_in_line.push(byte_as_ascii)
                 }
-            },
+
+                if ascii_in_line.contains(&String::from("ciusarada")) {
+                    println!("{}", format!("{:08}", index + (10 * start)));
+                    panic!("BATATA");
+            }
+            }
             Err(e) => println!("{}", e)
         };
 
         index += 1;
         if index % 10 == 0 {
+            println!("{}", format!("{:08}", index + (10 * start)));
+            println!("{}", ascii_in_line);
+
             let line = format!("{:08}", index + (10 * start));
             page.push(Line::create(line, hex_in_line, ascii_in_line));
 
@@ -173,6 +181,15 @@ impl Application for DiskVisualizer {
                 if self.start >= 1 {
                     self.load_page(self.start - 1, self.end - 1);
                 }
+            },
+            Message::Loop =>{
+                let mut start = 0;
+                let mut end = 30;
+                loop {
+                    self.load_page(start, end);
+                    start += 5000;
+                    end += 5000;
+                }
             }
         }
         return iced::Command::none()
@@ -224,6 +241,14 @@ impl Application for DiskVisualizer {
                                 }),
                 Status::Ignored
             ) => Some(Message::Up),
+            (
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                                    key_code: KeyCode::L,
+                                    modifiers: _,
+                                    ..
+                                }),
+                Status::Ignored
+            ) => Some(Message::Loop),
             _ => None
         })
     }
@@ -234,5 +259,6 @@ pub enum Message {
     PageDown,
     PageUp,
     Down,
-    Up
+    Up,
+    Loop
 }
