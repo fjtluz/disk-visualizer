@@ -30,8 +30,9 @@ fn write_to_page(file: &mut File, page: &mut Vec<Line>, start: usize, end: usize
     let reader = BufReader::new(file);
 
     let bytes = reader.bytes();
+    let skipped_bytes = bytes.skip(10 * start);
 
-    for byte_result in bytes.skip(10 * start) {
+    for byte_result in skipped_bytes {
         match byte_result {
             Ok(byte) => {
                 let mut byte_as_hex = format!("{byte:X}");
@@ -94,10 +95,22 @@ pub struct DiskVisualizer {
 
 impl DiskVisualizer {
     pub fn load_page(&mut self, start: usize, end: usize) {
+        let mut disk_path = Path::new("");
+        if env::consts::OS == "linux" {
+            disk_path = Path::new("/dev/sda");
+        } else if env::consts::OS == "windows" {
+            disk_path = Path::new("\\\\.\\C:");
+        } else {
+            panic!("OS não suportado pela aplicação!")
+        }
+
+        let mut file = File::open(disk_path).expect("Não foi possível ler o arquivo informado!");
+
         let mut current_page = vec![];
 
-        write_to_page(&mut self.file, &mut current_page, start, end);
+        write_to_page(&mut file, &mut current_page, start, end);
 
+        self.file = file;
         self.current_page = current_page;
         self.start = start;
         self.end = end;
@@ -223,6 +236,3 @@ pub enum Message {
     Down,
     Up
 }
-
-
-
