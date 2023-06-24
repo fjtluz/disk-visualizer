@@ -1,150 +1,211 @@
-extern crate core;
-
 mod page;
 
+use std::collections::HashSet;
 use page::Line;
 
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 use std::env;
 
-use iced::{keyboard, window};
+use iced::{color, keyboard, Renderer, Theme, widget, window};
 use iced::{subscription, Subscription, Event};
 use iced::{Application, Error};
 use iced::theme;
 
-use iced::widget::{container,  text};
+use iced::widget::{button, Button, container, horizontal_space, row, text, text_input};
 use iced::widget::Column;
 use iced::{Element, Length, Settings};
 use iced::event::Status;
 use iced::keyboard::KeyCode;
+use iced::theme::TextInput;
 
-fn write_to_page(file: &mut File, page: &mut Vec<Line>, start: usize, end: usize) {
-    let mut total_of_bytes_read = start.clone();
-    let mut index = 0;
 
-    let mut hex_in_line = String::new();
-    let mut ascii_in_line = String::new();
+fn read_sector(path: &Path, start: u64) -> Vec<Line> {
+    let mut utf_8_buffer = [0; 2];
 
-    let reader = BufReader::new(file);
+    let mut page = vec![];
 
-    let bytes = reader.bytes();
-    let skipped_bytes = bytes.skip(10 * start);
+    match File::open(path) {
+        Ok(mut file) => {
 
-    for byte_result in skipped_bytes {
-        match byte_result {
-            Ok(byte) => {
-                let mut byte_as_hex = format!("{byte:X}");
-                if byte_as_hex.len() == 1 {
-                    byte_as_hex.insert(0, '0');
+            if let Ok(offset) = file.seek(SeekFrom::Start(start))  {
+                let mut hex_in_line = String::new();
+                let mut str_in_line = String::new();
+
+                let mut buffer = [0; 512];
+                file.read_exact(&mut buffer).expect("Não foi possível ler o arquivo informado");
+
+                let mut index = 0;
+                for byte in buffer {
+                    let byte_as_hex = format!("{:02X}", byte);
+                    hex_in_line.push_str(byte_as_hex.as_str());
+                    hex_in_line.push(' ');
+
+                    match byte_as_hex.as_str() {
+                        "00" => str_in_line.push('.'),
+                        "85" => str_in_line.push_str("NL"),     // NEXT LINE
+                        "0A" => str_in_line.push_str("LF"),     // LINE FEED
+                        "0B" => str_in_line.push_str("LT"),     // LINE TABULATION
+                        "0C" => str_in_line.push_str("FF"),     // FORM FEED
+                        "OD" => str_in_line.push_str("CR"),     // CARRIAGE RETURN
+                        _ => {
+                            let byte_as_chr = char::from(byte);
+                            let byte_as_str = byte_as_chr.encode_utf8(&mut utf_8_buffer);
+                            str_in_line.push_str(byte_as_str);
+                        }
+                    }
+
+                    index += 1;
+                    if index % 16 == 0 {
+                        let off_in_line = format!("{:05X}", offset + index);
+                        page.push(Line::create(off_in_line, hex_in_line, str_in_line));
+
+                        hex_in_line = String::new();
+                        str_in_line = String::new();
+                    }
                 }
-                hex_in_line.push_str(byte_as_hex.as_str());
-                hex_in_line.push(' ');
+            }
+            return page;
+        },
+        Err(_) => panic!("Não foi possível abrir o arquivo")
+    }
+}
 
-                let byte_as_ascii = char::from(byte);
+fn find_term(path: &Path, search_term: &String) -> Option<(Vec<Line>, u64)> {
+    let bytes = search_term.as_bytes();
 
-                match byte_as_hex.as_str() {
-                    "85" => ascii_in_line.push_str("NL"),   // NEXT LINE (NL)
-                    "0A" => ascii_in_line.push_str("LF"),   // LINE FEED (LF)
-                    "0B" => ascii_in_line.push_str("LT"),   // LINE TABULATION (LT)
-                    "0C" => ascii_in_line.push_str("FF"),   // FORM FEED (FF)
-                    "0D" => ascii_in_line.push_str("CR"),   // CARRIAGE RETURN (CR)
-                    _ => ascii_in_line.push(byte_as_ascii)
+    match File::open(path) {
+        Ok(mut file) => {
+            let mut found_term = false;
+            let mut offset = 0;
+
+            while !found_term {
+                if let Ok(size) = file.seek(SeekFrom::Start(offset)) {
+                    let mut buffer = [0; 10_000];
+
+                    match file.read_exact(&mut buffer) {
+                        Ok(..) => {
+
+                            let mut matching_bytes = 0;
+                            let mut index = 0;
+
+                            for byte in buffer {
+                                if bytes[matching_bytes] == byte {
+                                    matching_bytes += 1;
+                                } else {
+                                    matching_bytes = 0;
+                                }
+
+                                if matching_bytes == bytes.len() {
+                                    found_term = true;
+
+                                    let mut word_location = offset + index - (bytes.len() as u64);
+                                    while word_location % 16 != 0 {
+                                        word_location -= 1;
+                                    }
+
+                                    return Some((read_sector(path, word_location), word_location));
+                                }
+                                index += 1;
+                            }
+
+
+
+                        }, Err(_) => panic!("Não foi possível ler arquivo")
+                    }
+
+                    offset += 10_000 - (bytes.len() as u64);
+                } else {
+                    return None;
                 }
-            },
-            Err(e) => println!("{}", e)
-        };
+            }
+            return None;
+        },
+        Err(_) => panic!("Não foi possível abrir o arquivo")
+    }
+}
 
-        index += 1;
-        if index % 10 == 0 {
-            let line = format!("{:08}", index + (10 * start));
-            page.push(Line::create(line, hex_in_line, ascii_in_line));
+enum Mode {
+    READ,
+    NAVE,
+    FIND
+}
 
-            hex_in_line = String::new();
-            ascii_in_line = String::new();
-
-            total_of_bytes_read += 1;
+fn load_font(setting: &mut Settings<()>) {
+    let font_path = Path::new("fonts/JetBrainsMono-Regular.ttf");
+    match File::open(font_path) {
+        Ok(mut file) => {
+            let mut buffer = vec![0; 273_900];
+            match file.read_exact(&mut buffer) {
+                Ok(_) => {
+                    let boxed_buffer: Box<[u8]> = buffer.into_boxed_slice();
+                    let font: &'static [u8] = Box::leak(boxed_buffer);
+                    setting.default_font = Some(font);
+                }
+                Err(_) => println!("Não foi possível definir a fonte"),
+            }
         }
-
-        if total_of_bytes_read == end {
-            break;
-        }
+        Err(_) => println!("Não foi possível definir a fonte"),
     }
 }
 
 fn main() -> Result<(), Error> {
-    let settings = Settings {
+    let mut settings = Settings {
         window: window::Settings {
-            size: (600, 600),
+            size: (720, 660),
             resizable: false,
             ..window::Settings::default()
         },
         ..Default::default()
     };
 
+    load_font(&mut settings);
+
     DiskVisualizer::run(settings)
 }
 
-pub struct DiskVisualizer {
-    file: File,
+pub struct DiskVisualizer<'a> {
+    path: &'a Path,
     current_page: Vec<Line>,
-    start: usize,
-    end: usize
+    start: u64,
+    string_input: String,
+    operation_mode: Mode,
 }
 
-impl DiskVisualizer {
-    pub fn load_page(&mut self, start: usize, end: usize) {
-        let mut disk_path = Path::new("");
-        if env::consts::OS == "linux" {
-            disk_path = Path::new("/dev/sda");
-        } else if env::consts::OS == "windows" {
-            disk_path = Path::new("\\\\.\\C:");
-        } else {
-            panic!("OS não suportado pela aplicação!")
-        }
-
-        let mut file = File::open(disk_path).expect("Não foi possível ler o arquivo informado!");
-
-        let mut current_page = vec![];
-
-        write_to_page(&mut file, &mut current_page, start, end);
-
-        self.file = file;
-        self.current_page = current_page;
+impl DiskVisualizer<'_> {
+    pub fn load_page(&mut self, start: u64) {
+        self.current_page = read_sector(self.path, start);
         self.start = start;
-        self.end = end;
+    }
+
+    pub fn find_term(&mut self) -> Option<(Vec<Line>, u64)> {
+        return find_term(self.path, &self.string_input);
     }
 }
 
-impl Application for DiskVisualizer {
+impl Application for DiskVisualizer<'_> {
     type Executor = iced::executor::Default;
     type Message = Message;
-    type Theme = theme::Theme;
+    type Theme = Theme;
     type Flags = ();
 
     fn new(_flags: ()) -> (Self, iced::Command<Message>) {
-        let mut disk_path = Path::new("");
-        if env::consts::OS == "linux" {
-            disk_path = Path::new("/dev/sda");
-        } else if env::consts::OS == "windows" {
-            disk_path = Path::new("\\\\.\\C:");
-        } else {
-            panic!("OS não suportado pela aplicação!")
-        }
+        let disk_path = match env::consts::OS {
+            "windows" => Path::new("\\\\.\\C:"),
+            "linux" => Path::new("/dev/sda"),
+            _ => panic!("Sistema operacional não suportado")
+        };
 
-        let mut file = File::open(disk_path).expect("Não foi possível ler o arquivo informado!");
-
-        let mut page: Vec<Line> = vec![];
-
-        write_to_page(&mut file, &mut page, 0, 30);
+        let page = read_sector(disk_path, 0);
 
         (
             DiskVisualizer {
-                file,
+                path: disk_path,
                 current_page: page,
                 start: 0,
-                end: 30
+                string_input: String::new(),
+                operation_mode: Mode::READ,
             },
             iced::Command::none()
         )
@@ -157,21 +218,44 @@ impl Application for DiskVisualizer {
     fn update(&mut self, message: Self::Message) -> iced::Command<Message> {
         match message {
             Message::PageDown => {
-                self.load_page(self.start + 30, self.end + 30);
+                self.load_page(self.start + 512);
             },
             Message::PageUp => {
                 if self.start >= 30 {
-                    self.load_page(self.start - 30, self.end - 30);
+                    self.load_page(self.start - 512);
                 } else if self.start != 0 {
-                    self.load_page(0, 30);
+                    self.load_page(0);
                 }
             },
             Message::Down => {
-                self.load_page(self.start + 1, self.end + 1);
+                self.load_page(self.start + 16);
             },
             Message::Up => {
                 if self.start >= 1 {
-                    self.load_page(self.start - 1, self.end - 1);
+                    self.load_page(self.start - 16);
+                }
+            },
+            Message::Esc => {
+                self.operation_mode = Mode::READ;
+                self.string_input = String::new();
+            }
+            Message::Find => self.operation_mode = Mode::FIND,
+            Message::Navigate => self.operation_mode = Mode::NAVE,
+            Message::InputChange(str) => self.string_input = str,
+            Message::SubmitInput => {
+                if let Mode::FIND = self.operation_mode {
+                    if let Some(page) = self.find_term() {
+                        self.current_page = page.0;
+                        self.start = page.1;
+                    }
+                } else if let Mode::NAVE = self.operation_mode {
+                    match u64::from_str_radix(self.string_input.as_str(), 16) {
+                        Ok(hash) => {
+                            self.current_page = read_sector(self.path, hash);
+                            self.start = hash;
+                        }
+                        Err(_) => println!("Não possível converter")
+                    }
                 }
             }
         }
@@ -179,11 +263,41 @@ impl Application for DiskVisualizer {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        let mut content: Column<'_, Message> = Column::new().width(Length::Fill);
+        let navigate_btn = Button::new(text("Navigate").size(12))
+            .on_press(Message::Navigate);
 
-        for i in &self.current_page {
+        let find_btn = Button::new(text("Find").size(12))
+            .on_press(Message::Find);
+
+        let mut input_text = text_input("", self.string_input.as_str())
+            .on_input(Message::InputChange)
+            .on_submit(Message::SubmitInput)
+            .width(300)
+            .size(12);
+
+        let horizontal_space = horizontal_space(20);
+
+        let mut mode_display = match self.operation_mode {
+            Mode::READ => text("READ MODE"),
+            Mode::FIND => text("FIND MODE"),
+            Mode::NAVE => text("NAVE MODE")
+        };
+
+        mode_display = mode_display.size(24);
+
+        let mut toolbar = row![navigate_btn, find_btn, mode_display, horizontal_space];
+        toolbar = toolbar.spacing(5);
+
+        if let Mode::FIND | Mode::NAVE = self.operation_mode {
+            toolbar = toolbar.push(input_text);
+        }
+
+        let mut content: Column<'_, Message> = Column::new().width(Length::Fill);
+        content = content.push(toolbar);
+
+        for line in &self.current_page {
             content = content.push(
-                text(format!("{i}"))
+                text(format!("{}", line))
             );
         }
 
@@ -224,6 +338,14 @@ impl Application for DiskVisualizer {
                                 }),
                 Status::Ignored
             ) => Some(Message::Up),
+            (
+                Event::Keyboard(keyboard::Event::KeyPressed {
+                                    key_code: KeyCode::Escape,
+                                    modifiers: _,
+                                    ..
+                                }),
+                Status::Ignored
+            ) => Some(Message::Esc),
             _ => None
         })
     }
@@ -234,5 +356,10 @@ pub enum Message {
     PageDown,
     PageUp,
     Down,
-    Up
+    Up,
+    Esc,
+    Navigate,
+    Find,
+    InputChange(String),
+    SubmitInput,
 }

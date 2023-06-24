@@ -18,7 +18,7 @@ impl Line {
 
 impl Display for Line {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        return write!(f, "{}      {}      {}", self.position, self.hex_bytes, self.ascii_bytes);
+        return write!(f, "{}  {}  {}", self.position, self.hex_bytes, self.ascii_bytes);
     }
 }
 
