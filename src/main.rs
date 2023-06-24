@@ -1,24 +1,21 @@
 mod page;
 
-use std::collections::HashSet;
 use page::Line;
 
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::env;
 
-use iced::{color, keyboard, Renderer, Theme, widget, window};
+use iced::{keyboard, Theme, window};
 use iced::{subscription, Subscription, Event};
 use iced::{Application, Error};
-use iced::theme;
 
-use iced::widget::{button, Button, container, horizontal_space, row, text, text_input};
+use iced::widget::{Button, container, horizontal_space, row, text, text_input};
 use iced::widget::Column;
 use iced::{Element, Length, Settings};
 use iced::event::Status;
 use iced::keyboard::KeyCode;
-use iced::theme::TextInput;
 
 
 fn read_sector(path: &Path, start: u64) -> Vec<Line> {
@@ -48,7 +45,7 @@ fn read_sector(path: &Path, start: u64) -> Vec<Line> {
                         "0A" => str_in_line.push_str("LF"),     // LINE FEED
                         "0B" => str_in_line.push_str("LT"),     // LINE TABULATION
                         "0C" => str_in_line.push_str("FF"),     // FORM FEED
-                        "OD" => str_in_line.push_str("CR"),     // CARRIAGE RETURN
+                        "0D" => str_in_line.push_str("CR"),     // CARRIAGE RETURN
                         _ => {
                             let byte_as_chr = char::from(byte);
                             let byte_as_str = byte_as_chr.encode_utf8(&mut utf_8_buffer);
@@ -77,42 +74,47 @@ fn find_term(path: &Path, search_term: &String) -> Option<(Vec<Line>, u64)> {
 
     match File::open(path) {
         Ok(mut file) => {
-            let mut found_term = false;
             let mut offset = 0;
 
-            while !found_term {
-                if let Ok(size) = file.seek(SeekFrom::Start(offset)) {
+            loop {
+                if let Ok(_) = file.seek(SeekFrom::Start(offset)) {
                     let mut buffer = [0; 10_000];
 
                     match file.read_exact(&mut buffer) {
                         Ok(..) => {
-
-                            let mut matching_bytes = 0;
-                            let mut index = 0;
-
-                            for byte in buffer {
-                                if bytes[matching_bytes] == byte {
-                                    matching_bytes += 1;
-                                } else {
-                                    matching_bytes = 0;
+                            let mut contains_all_bytes = true;
+                            for byte in bytes {
+                                if !buffer.contains(byte) {
+                                    contains_all_bytes = false;
+                                    break;
                                 }
-
-                                if matching_bytes == bytes.len() {
-                                    found_term = true;
-
-                                    let mut word_location = offset + index - (bytes.len() as u64);
-                                    while word_location % 16 != 0 {
-                                        word_location -= 1;
-                                    }
-
-                                    return Some((read_sector(path, word_location), word_location));
-                                }
-                                index += 1;
                             }
 
+                            if contains_all_bytes {
+                                let mut matching_bytes = 0;
+                                let mut index = 0;
 
+                                for byte in buffer {
+                                    if bytes[matching_bytes] == byte {
+                                        matching_bytes += 1;
+                                    } else {
+                                        matching_bytes = 0;
+                                    }
 
-                        }, Err(_) => panic!("Não foi possível ler arquivo")
+                                    if matching_bytes == bytes.len() {
+
+                                        let mut word_location = offset + index - (bytes.len() as u64);
+                                        while word_location % 16 != 0 {
+                                            word_location -= 1;
+                                        }
+
+                                        return Some((read_sector(path, word_location), word_location));
+                                    }
+                                    index += 1;
+                                }
+                            }
+
+                        }, Err(_) => break
                     }
 
                     offset += 10_000 - (bytes.len() as u64);
@@ -153,7 +155,7 @@ fn load_font(setting: &mut Settings<()>) {
 fn main() -> Result<(), Error> {
     let mut settings = Settings {
         window: window::Settings {
-            size: (720, 660),
+            size: (750, 660),
             resizable: false,
             ..window::Settings::default()
         },
@@ -269,7 +271,7 @@ impl Application for DiskVisualizer<'_> {
         let find_btn = Button::new(text("Find").size(12))
             .on_press(Message::Find);
 
-        let mut input_text = text_input("", self.string_input.as_str())
+        let input_text = text_input("", self.string_input.as_str())
             .on_input(Message::InputChange)
             .on_submit(Message::SubmitInput)
             .width(300)
