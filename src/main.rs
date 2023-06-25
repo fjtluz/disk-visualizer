@@ -4,7 +4,7 @@ use page::Line;
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::env;
 
 use iced::{keyboard, Theme, window};
@@ -18,7 +18,7 @@ use iced::event::Status;
 use iced::keyboard::KeyCode;
 
 
-fn read_sector(path: &Path, start: u64) -> Vec<Line> {
+fn read_sector(path: &PathBuf, start: u64) -> Vec<Line> {
     let mut utf_8_buffer = [0; 2];
 
     let mut page = vec![];
@@ -69,7 +69,7 @@ fn read_sector(path: &Path, start: u64) -> Vec<Line> {
     }
 }
 
-fn find_term(path: &Path, search_term: &String) -> Option<(Vec<Line>, u64)> {
+fn find_term(path: &PathBuf, search_term: &String) -> Option<(Vec<Line>, u64)> {
     let bytes = search_term.as_bytes();
 
     match File::open(path) {
@@ -129,6 +129,7 @@ fn find_term(path: &Path, search_term: &String) -> Option<(Vec<Line>, u64)> {
 }
 
 enum Mode {
+    LOAD,
     READ,
     NAVE,
     FIND
@@ -167,45 +168,49 @@ fn main() -> Result<(), Error> {
     DiskVisualizer::run(settings)
 }
 
-pub struct DiskVisualizer<'a> {
-    path: &'a Path,
+pub struct DiskVisualizer {
+    path: PathBuf,
     current_page: Vec<Line>,
     start: u64,
+    placeholder: String,
     string_input: String,
     operation_mode: Mode,
 }
 
-impl DiskVisualizer<'_> {
+impl DiskVisualizer {
     pub fn load_page(&mut self, start: u64) {
-        self.current_page = read_sector(self.path, start);
+        self.current_page = read_sector(&self.path, start);
         self.start = start;
     }
 
     pub fn find_term(&mut self) -> Option<(Vec<Line>, u64)> {
-        return find_term(self.path, &self.string_input);
+        return find_term(&self.path, &self.string_input);
     }
 }
 
-impl Application for DiskVisualizer<'_> {
+impl Application for DiskVisualizer {
     type Executor = iced::executor::Default;
     type Message = Message;
     type Theme = Theme;
     type Flags = ();
 
     fn new(_flags: ()) -> (Self, iced::Command<Message>) {
-        let disk_path = match env::consts::OS {
-            "windows" => Path::new("\\\\.\\C:"),
-            "linux" => Path::new("/dev/sda"),
+        let path_str = match env::consts::OS {
+            "windows" => "\\\\.\\C:",
+            "linux" => "/dev/sda",
             _ => panic!("Sistema operacional não suportado")
         };
 
-        let page = read_sector(disk_path, 0);
+        let disk_path = PathBuf::from(path_str);
+
+        let page = read_sector(&disk_path, 0);
 
         (
             DiskVisualizer {
                 path: disk_path,
                 current_page: page,
                 start: 0,
+                placeholder: String::new(),
                 string_input: String::new(),
                 operation_mode: Mode::READ,
             },
@@ -223,7 +228,7 @@ impl Application for DiskVisualizer<'_> {
                 self.load_page(self.start + 512);
             },
             Message::PageUp => {
-                if self.start >= 30 {
+                if self.start >= 512 {
                     self.load_page(self.start - 512);
                 } else if self.start != 0 {
                     self.load_page(0);
@@ -233,7 +238,7 @@ impl Application for DiskVisualizer<'_> {
                 self.load_page(self.start + 16);
             },
             Message::Up => {
-                if self.start >= 1 {
+                if self.start >= 16 {
                     self.load_page(self.start - 16);
                 }
             },
@@ -241,22 +246,55 @@ impl Application for DiskVisualizer<'_> {
                 self.operation_mode = Mode::READ;
                 self.string_input = String::new();
             }
-            Message::Find => self.operation_mode = Mode::FIND,
-            Message::Navigate => self.operation_mode = Mode::NAVE,
+            Message::Find => {
+                self.operation_mode = Mode::FIND;
+                self.string_input = String::new();
+                self.placeholder = String::from("Digite o termo que deseja buscar");
+            },
+            Message::Navigate => {
+                self.operation_mode = Mode::NAVE;
+                self.string_input = String::new();
+                self.placeholder = String::from("Digite a posição para navegar (em hexa)");
+            },
+            Message::Load => {
+                self.operation_mode = Mode::LOAD;
+                self.string_input = String::new();
+                self.placeholder = String::from("Digite o disco que deseja acessar (e.g. C:, sda)");
+            }
             Message::InputChange(str) => self.string_input = str,
             Message::SubmitInput => {
                 if let Mode::FIND = self.operation_mode {
-                    if let Some(page) = self.find_term() {
+                    let find_result = match self.string_input.is_empty() {
+                        true => None,
+                        false => self.find_term()
+                    };
+
+                    if let Some(page) = find_result {
                         self.current_page = page.0;
                         self.start = page.1;
                     }
                 } else if let Mode::NAVE = self.operation_mode {
                     match u64::from_str_radix(self.string_input.as_str(), 16) {
                         Ok(hash) => {
-                            self.current_page = read_sector(self.path, hash);
+                            self.current_page = read_sector(&self.path, hash - 16);
                             self.start = hash;
                         }
-                        Err(_) => println!("Não possível converter")
+                        Err(_) => self.placeholder = format!("Não foi possível converter \"{}\" para decimal", self.string_input)
+                    }
+                } else if let Mode::LOAD = self.operation_mode {
+                    let new_path = match env::consts::OS {
+                        "linux" => std::path::PathBuf::from(format!("/dev/{}", self.string_input)),
+                        "windows" => std::path::PathBuf::from(format!("\\\\.\\{}", self.string_input)),
+                        _ => panic!("Sistema operacional não suportado"),
+                    };
+
+                    if new_path.exists() {
+                        self.path = new_path;
+                        self.current_page = read_sector(&self.path, 0);
+                        self.start = 0;
+                    } else {
+                        self.placeholder = format!("Disco {} não foi encontrado", self.string_input);
+                        self.string_input = String::new();
                     }
                 }
             }
@@ -265,33 +303,49 @@ impl Application for DiskVisualizer<'_> {
     }
 
     fn view(&self) -> Element<'_, Self::Message> {
-        let navigate_btn = Button::new(text("Navigate").size(12))
+        let load_btn = Button::new(text("CARREGAR").size(12))
+            .on_press(Message::Load);
+
+        let navigate_btn = Button::new(text("NAVEGAR").size(12))
             .on_press(Message::Navigate);
 
-        let find_btn = Button::new(text("Find").size(12))
+        let find_btn = Button::new(text("BUSCAR").size(12))
             .on_press(Message::Find);
 
-        let input_text = text_input("", self.string_input.as_str())
+
+        let input_text = text_input(self.placeholder.as_str(), self.string_input.as_str())
             .on_input(Message::InputChange)
             .on_submit(Message::SubmitInput)
             .width(300)
             .size(12);
 
-        let horizontal_space = horizontal_space(20);
+        let go_btn = Button::new(text("Ir").size(12))
+            .on_press(Message::SubmitInput);
+
+        let horizontal_size = match self.operation_mode {
+            Mode::READ => 0,
+            Mode::LOAD => 65,
+            Mode::FIND => 141,
+            Mode::NAVE => 98
+        };
+
+        let horizontal_space = horizontal_space(horizontal_size);
 
         let mut mode_display = match self.operation_mode {
-            Mode::READ => text("READ MODE"),
-            Mode::FIND => text("FIND MODE"),
-            Mode::NAVE => text("NAVE MODE")
+            Mode::READ => text("MODO LEITURA"),
+            Mode::LOAD => text("MODO CARREGAMENTO"),
+            Mode::FIND => text("MODO BUSCA"),
+            Mode::NAVE => text("MODO NAVEGAÇÃO")
         };
 
         mode_display = mode_display.size(24);
 
-        let mut toolbar = row![navigate_btn, find_btn, mode_display, horizontal_space];
+        let mut toolbar = row![load_btn, navigate_btn, find_btn, mode_display, horizontal_space];
         toolbar = toolbar.spacing(5);
 
-        if let Mode::FIND | Mode::NAVE = self.operation_mode {
+        if let Mode::FIND | Mode::NAVE | Mode::LOAD = self.operation_mode {
             toolbar = toolbar.push(input_text);
+            toolbar = toolbar.push(go_btn);
         }
 
         let mut content: Column<'_, Message> = Column::new().width(Length::Fill);
@@ -362,6 +416,7 @@ pub enum Message {
     Esc,
     Navigate,
     Find,
+    Load,
     InputChange(String),
     SubmitInput,
 }
