@@ -235,11 +235,15 @@ impl Application for DiskVisualizer {
                 }
             },
             Message::Down => {
-                self.load_page(self.start + 16);
+                if env::consts::OS == "linux" {
+                    self.load_page(self.start + 16);
+                }
             },
             Message::Up => {
-                if self.start >= 16 {
-                    self.load_page(self.start - 16);
+                if env::consts::OS == "linux" {
+                    if self.start >= 16 {
+                        self.load_page(self.start - 16);
+                    }
                 }
             },
             Message::Esc => {
@@ -276,7 +280,15 @@ impl Application for DiskVisualizer {
                 } else if let Mode::NAVE = self.operation_mode {
                     match u64::from_str_radix(self.string_input.as_str(), 16) {
                         Ok(hash) => {
-                            self.current_page = read_sector(&self.path, hash - 16);
+
+                            let mut offset = hash;
+                            if offset < 512 {
+                                offset = 0;
+                            } else {
+                                offset = offset - (offset % 512);
+                            }
+
+                            self.current_page = read_sector(&self.path, offset);
                             self.start = hash;
                         }
                         Err(_) => self.placeholder = format!("Não foi possível converter \"{}\" para decimal", self.string_input)
