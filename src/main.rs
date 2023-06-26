@@ -104,8 +104,14 @@ fn find_term(path: &PathBuf, search_term: &String) -> Option<(Vec<Line>, u64)> {
                                     if matching_bytes == bytes.len() {
 
                                         let mut word_location = offset + index - (bytes.len() as u64);
-                                        while word_location % 512 != 0 {
-                                            word_location += 1;
+                                        if word_location % 512 > 256 {
+                                            while word_location % 512 != 0 {
+                                                word_location += 1;
+                                            }
+                                        } else {
+                                            while word_location % 512 != 0 {
+                                                word_location -= 1;
+                                            }
                                         }
 
                                         return Some((read_sector(path, word_location), word_location));
