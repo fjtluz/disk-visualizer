@@ -123,7 +123,7 @@ fn find_term(path: &PathBuf, search_term: &String) -> Option<(Vec<Line>, u64)> {
                         }, Err(_) => break
                     }
 
-                    offset += 10_240 - (bytes.len() as u64);
+                    offset += 10_240;
                 } else {
                     return None;
                 }
