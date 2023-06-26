@@ -289,7 +289,7 @@ impl Application for DiskVisualizer {
                             }
 
                             self.current_page = read_sector(&self.path, offset);
-                            self.start = hash;
+                            self.start = offset;
                         }
                         Err(_) => self.placeholder = format!("Não foi possível converter \"{}\" para decimal", self.string_input)
                     }
