@@ -26,15 +26,19 @@ fn read_sector(path: &PathBuf, start: u64) -> Vec<Line> {
     match File::open(path) {
         Ok(mut file) => {
 
-            if let Ok(offset) = file.seek(SeekFrom::Start(start))  {
+            let nearest_512 = start - (start % 512);
+
+            if let Ok(offset) = file.seek(SeekFrom::Start(nearest_512))  {
                 let mut hex_in_line = String::new();
                 let mut str_in_line = String::new();
 
-                let mut buffer = [0; 512];
-                file.read_exact(&mut buffer).expect("Não foi possível ler o arquivo informado");
-
+                // let mut buffer = [0; 512];
+                // file.read_exact(&mut buffer).expect("Não foi possível ler o arquivo informado");
                 let mut index = 0;
-                for byte in buffer {
+
+                let mut buffer = file.bytes();
+                for res_byte in buffer.skip((start - nearest_512) as usize) {
+                    let byte = res_byte.unwrap();
                     let byte_as_hex = format!("{:02X}", byte);
                     hex_in_line.push_str(byte_as_hex.as_str());
                     hex_in_line.push(' ');
@@ -55,11 +59,16 @@ fn read_sector(path: &PathBuf, start: u64) -> Vec<Line> {
 
                     index += 1;
                     if index % 16 == 0 {
-                        let off_in_line = format!("{:05X}", offset + index);
+                        println!("{} {}", offset, start);
+                        let off_in_line = format!("{:05X}", start + index);
                         page.push(Line::create(off_in_line, hex_in_line, str_in_line));
 
                         hex_in_line = String::new();
                         str_in_line = String::new();
+                    }
+
+                    if index == 512 {
+                        break;
                     }
                 }
             }
@@ -78,7 +87,7 @@ fn find_term(path: &PathBuf, search_term: &String) -> Option<(Vec<Line>, u64)> {
 
             loop {
                 if let Ok(_) = file.seek(SeekFrom::Start(offset)) {
-                    let mut buffer = [0; 10_000];
+                    let mut buffer = [0; 10_240];
 
                     match file.read_exact(&mut buffer) {
                         Ok(..) => {
@@ -104,8 +113,8 @@ fn find_term(path: &PathBuf, search_term: &String) -> Option<(Vec<Line>, u64)> {
                                     if matching_bytes == bytes.len() {
 
                                         let mut word_location = offset + index - (bytes.len() as u64);
-                                        while word_location % 16 != 0 {
-                                            word_location -= 1;
+                                        while word_location % 512 != 0 {
+                                            word_location += 1;
                                         }
 
                                         return Some((read_sector(path, word_location), word_location));
@@ -117,7 +126,7 @@ fn find_term(path: &PathBuf, search_term: &String) -> Option<(Vec<Line>, u64)> {
                         }, Err(_) => break
                     }
 
-                    offset += 10_000 - (bytes.len() as u64);
+                    offset += 10_240 - (bytes.len() as u64);
                 } else {
                     return None;
                 }
